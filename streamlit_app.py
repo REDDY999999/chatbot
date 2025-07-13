@@ -1,5 +1,28 @@
 import streamlit as st
 from openai import OpenAI
+from pathlib import Path
+
+
+@st.cache_data
+def load_docs(directory: str = "docs"):
+    docs = []
+    for path in Path(directory).glob("*.txt"):
+        docs.append({"text": path.read_text()})
+    return docs
+
+
+def simple_retrieve(query: str, docs, k: int = 2):
+    query_words = set(query.lower().split())
+    scored = []
+    for doc in docs:
+        words = set(doc["text"].lower().split())
+        score = len(query_words & words)
+        scored.append((score, doc["text"]))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [text for score, text in scored[:k] if score > 0]
+
+
+docs = load_docs()
 
 # Show title and description.
 st.title("💬 Chatbot")
@@ -39,13 +62,22 @@ else:
         with st.chat_message("user"):
             st.markdown(prompt)
 
+        # Retrieve relevant documents and add them to the prompt.
+        context_docs = simple_retrieve(prompt, docs)
+        message_list = [
+            {"role": "system", "content": "Use the following documents to answer the question."},
+        ]
+        for doc_text in context_docs:
+            message_list.append({"role": "system", "content": doc_text})
+        message_list.extend(
+            {"role": m["role"], "content": m["content"]}
+            for m in st.session_state.messages
+        )
+
         # Generate a response using the OpenAI API.
         stream = client.chat.completions.create(
             model="gpt-3.5-turbo",
-            messages=[
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.messages
-            ],
+            messages=message_list,
             stream=True,
         )
 
@@ -54,3 +86,4 @@ else:
         with st.chat_message("assistant"):
             response = st.write_stream(stream)
         st.session_state.messages.append({"role": "assistant", "content": response})
+
